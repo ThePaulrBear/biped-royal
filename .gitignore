@@ -37,3 +37,5 @@ octave-workspace
 # End of https://www.toptal.com/developers/gitignore/api/matlab
 resources
 *.original
+*.eps
+robot_tutorial.m

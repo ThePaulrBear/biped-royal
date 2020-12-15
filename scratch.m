@@ -4,7 +4,7 @@ startup;
 global alpha theta3_ref
 global x0
 alpha = 0.5;
-theta3_ref = 0.0;
+theta3_ref = -pi/4;
 
 simulation = "continuous";
 
@@ -18,7 +18,7 @@ switch simulation
     case "continuous"
         [t, x] = ode23(@f_cl, [0, 5], x0);
 
-        u = [0*t, 0*t];
+        u = [0*t, 0*t, 0*t, 0*t];
         for i = 1:length(t)
             u(i, :) = control_law(x(i, :)')';
         end
@@ -34,10 +34,10 @@ switch simulation
         xlabel("t")
         
         figure()
-        y = [x(:, 3), x(:, 1) + x(:, 2)];
+        y = [x(:, 1), x(:, 2), x(:, 3) - theta3_ref, x(:, 5)];
         plot(t, y);
         title("Output y(t)")
-        legend("\theta_3", "\theta_1 + \theta_2")
+        legend("\theta_1", "\theta_2", "\theta_3-\theta_3^d", "\theta_5")
         xlabel("t")
         ylabel("y")
         
@@ -53,7 +53,6 @@ switch simulation
 %         legend("\omega_1", "\omega_2", "\omega_3")
 %         xlabel("t")
     case "hybrid"
-        
         % initial conditions;
         % simulation horizon
         TSPAN=[0 10];
@@ -86,106 +85,197 @@ end
 function xdot = f_cl(~, x)
     global B
     [C, D, G] = dynamic_matrices(x);
-    u = control_law(x);
-    omega = x(4:6);
+    [u, v] = control_law(x);
+    omega = x(6:10);
     xdot = [omega; 
             D \ (-C*omega - G + B*u)]; 
+%     assert(norm(xdot(6) - v(1)) < 0.01);
 end
 
-function u = control_law(x)
+function [u, v] = control_law(x)
  
-    global torso_mass hip_mass leg_mass leg_length torso_length theta3_ref
+    global theta3_ref B
 
     theta1 = x(1);
     theta2 = x(2);
     theta3 = x(3);
-    omega = x(4:6);
-    omega1 = x(4);
-    omega2 = x(5);
-    omega3 = x(6);
+    theta4 = x(4);
+    theta5 = x(5);
+    omega1 = x(6);
+    omega2 = x(7);
+    omega3 = x(8);
+    omega4 = x(9);
+    omega5 = x(10);
+    omega = x(6:10);
 
-    c12 = cos(theta1 - theta2);
-    c13 = cos(theta1 - theta3);
+    H = [1 0 0 0 0; 
+         0 1 0 0 0; 
+         0 0 1 0 0; 
+         0 0 0 0 1];
 
-    MT = torso_mass;
-    MH = hip_mass;
-    m = leg_mass;
-    L = torso_length; % this is a lowercase L in Grizzle.
-    r = leg_length;
-
-    
-    % Center of gravity constraint from page 7 of Grizzle
-    assert(0 < L * MT)
-    assert(L*MT < r*(m + MT + MH))
-
-    A = [0, 0, 1; 
-         1, 1, 0];
-    global B
+    %hip_mass_sig is removed from the parameters of dynamic_matrices
     [C, D, G] = dynamic_matrices(x);
 
-    Lf = [omega3; omega1 + omega2]; 
-    LfLf = A * (D \ (-C*omega - G));
-    LgLf = A * (D \ B);
+    y = [theta1;
+         theta2;
+         theta3-theta3_ref;
+         theta5];
+    Lf = [omega1; 
+          omega2; 
+          omega3; 
+          omega5]; 
+    LfLf = H * (D \ (-C*omega - G));
+    LgLf = H * (D \ B);
 
-    R11 = m*r^3/4*(5/4*m*r + MH*r + MT*r - m*r*c12^2 + MT*L*c13);
-    R12 = m*r^3/4*(5/4*m*r + MH*r + MT*r - m*r*c12^2 + 2*MT*L*c12*c13);
-    R21 = -m*MT*L*r^2/4*(1 + 2*c12)*(r*c13 + L);
-    R22 = -MT*L*r^2 / 4 *(5*m*L + 4*MH*L + 4*MT*L + m*r*c13 + 2*m*r*c12*c13 - 4*MT*L*(c13)^2 + 2* m*L*c12);
-    detD = m* MT*r^4*L^2/4*(5/4*m + MH + MT - m*c12^2 - MT*c13^2);
-%     assert(abs(detD - det(D)) < 1e-6)
-    LgLf_alt = 1/detD * [R11, R12; R21, R22];
-%     assert(norm(LgLf - LgLf_alt) < 1e-6)
-
-    y = [theta3 - theta3_ref; theta1 + theta2];
     ydot = Lf;
 
-    Psi = [psi_f([y(1); ydot(1)]); 
-           psi_f([y(2); ydot(2)])];
-    u = LgLf \ (Psi - LfLf);
-
+    global alpha
+    v = [psi_f([y(1); ydot(1)], alpha); 
+         psi_f([y(2); ydot(2)], alpha); 
+         psi_f([y(3); ydot(3)], alpha); 
+         psi_f([y(4); ydot(4)], alpha)];
+    u = LgLf \ (v - LfLf);
 end
 
 function y = phi(x)
-    global alpha
+     global alpha
     y = x(1) + (1/2 - alpha)*sign(x(2)).*abs(x(2)).^(2 - alpha);
 end
 
-function y = psi_f(x)
-    global alpha
+function y = psi_f(x, alpha)
      y = -sign(x(2)).*abs(x(2)).^alpha - sign(phi(x)).*abs(phi(x)).^(alpha/(2-alpha));
 end
 
 function [C, D, G] = dynamic_matrices(x)
-    global g torso_mass hip_mass leg_mass leg_length torso_length
+                    %m1_sig, m2_sig, m3_sig, m4_sig, m5_sig, L1_sig, L2_sig, L3_sig, L4_sig, L5_sig
+    global g torso_mass leg_mass leg_length torso_length
+
     theta1 = x(1);
     theta2 = x(2);
     theta3 = x(3);
-    omega1 = x(4);
-    omega2 = x(5);
-    omega3 = x(6);
-
-    s12 = sin(theta1 + theta2);
-    s13 = sin(theta1 + theta3);
-    c12 = cos(theta1 - theta2);
-    c13 = cos(theta1 - theta3);
+    theta4 = x(4);
+    theta5 = x(5);
+    omega1 = x(6);
+    omega2 = x(7);
+    omega3 = x(8);
+    omega4 = x(9);
+    omega5 = x(10);
     
-    MT = torso_mass;
-    MH = hip_mass;
-    m = leg_mass;
-    L = torso_length; % this is a lowercase L in Grizzle.
-    r = leg_length;
+    %
+    alpha10 = theta1;
+    alpha20 = alpha10+theta2;
+    alpha30 = alpha20+theta3;
+    alpha40 = alpha30+theta4;
+    alpha50 = alpha40+theta5;
+    
+    alpha21 = theta2;
+    alpha31 = alpha21+theta3;
+    alpha41 = alpha31+theta4;
+    alpha51 = alpha21+theta5;
+    
+    alpha12 = -alpha21;
+    alpha32 = theta3;
+    alpha42 = alpha32+theta4;
+    alpha52 = theta5;
+    
+    alpha13 = -alpha31;
+    alpha23 = -alpha32;
+    alpha43 = theta4;
+    
+    alpha14 = -alpha41;
+    alpha24 = -alpha42;
+    alpha34 = -alpha43;
+    
+    alpha15 = -alpha51;
+    alpha25 = -alpha52;
+    
+    %R_22 = cos()
+    R10_22 = cos(alpha10);
+    R20_22 = cos(alpha20); 
+    R30_22 = cos(alpha30); 
+    R40_22 = cos(alpha40);
+    R50_22 = cos(alpha50);
+    
+    R21_22 = cos(alpha21);
+    R31_22 = cos(alpha31);
+    R41_22 = cos(alpha41);
+    R51_22 = cos(alpha51);
+    
+    R12_22 = cos(alpha12);
+    R32_22 = cos(alpha32);
+    R42_22 = cos(alpha42);
+    R52_22 = cos(alpha52);
+    
+    R13_22 = cos(alpha13);
+    R23_22 = cos(alpha23);
+    R43_22 = cos(alpha43);
+    
+    R14_22 = cos(alpha14);
+    R24_22 = cos(alpha24);
+    R34_22 = cos(alpha34);
+    
+    R15_22 = cos(alpha15);
+    R25_22 = cos(alpha25);
+    
+    %R_21 = sin()
+    R21_21 = sin(alpha21);
+    R31_21 = sin(alpha31);
+    R41_21 = sin(alpha41);
+    R51_21 = sin(alpha51);
+    
+    R12_21 = sin(alpha12);
+    R32_21 = sin(alpha32);
+    R42_21 = sin(alpha42);
+    R52_21 = sin(alpha52);
+    
+    R13_21 = sin(alpha13);
+    R23_21 = sin(alpha23);
+    R43_21 = sin(alpha43);
+    
+    R14_21 = sin(alpha14);
+    R24_21 = sin(alpha24);
+    R34_21 = sin(alpha34);
+    
+    R15_21 = sin(alpha15);
+    R25_21 = sin(alpha25);
+    
+    %I defined the masses and lengths in terms of leg_mass and
+    %leg_length because they're already defined
+    m1 = leg_mass; %m1_sig
+    m2 = leg_mass; %m2_sig
+    m3 = leg_mass; %m3_sig
+    m4 = leg_mass; %m4_sig
+    m5 = torso_mass; %m5_sig
+    
+    L1 = leg_length; %L1_sig
+    L2 = leg_length; %L2_sig
+    L3 = leg_length; %L3_sig
+    L4 = leg_length; %L4_sig
+    L5 = torso_length; %L5_sig   
+    
+    Pi = [(m1/4)+m2+m3+m4+m5, (m2+m3+m4+m5)*R12_22, (m3+m4)*R13_22, m4*R14_22, m5*R15_22;
+        ((m2/2)+m3+m4+m5)*R21_22, m2/4+m3+m4+m5, (m3+m4)*R23_22, m4*R24_22, m5*R25_22;
+        ((m3/2)+m4)*R31_22, ((m3/2)+m4)*R32_22, (m3/4)+m4, m4*R34_22, 0;
+        m4/2*R41_22, m4/2*R42_22, m4/2*R43_22, m4/4, 0;
+        m5/2*R51_22, m5/2*R52_22, 0, 0, m5/2];
+    
+    Lambda = [0, (m2+m3+m4+m5)*R12_21, (m3+m4)*R13_21, m4*R14_21, m5*R15_21;
+        ((m2/2)+m3+m4+m5)*R21_21, 0, (m3+m4)*R23_21, m4*R24_21, m5*R25_21;
+        ((m3/2)+m4)*R31_21, ((m3/2)+m4)*R32_21, 0, m4*R34_21, 0;
+        m4/2*R41_21, m4/2*R42_21, m4/2*R43_21, 0, 0;
+        m5/2*R51_21, m5/2*R52_21, 0, 0, 0];
+    
+    L = diag([L1, L2, L3, L4, 2*L5]);
+    
+    G = g*[L1*(3/2*m1+m2+m3+m4+m5)*R10_22;
+           L2*(3/2*m2+m3+m4+m5)*R20_22;
+           L3*(3/2*m3+m4)*R30_22;
+           L4*3/2*m4*R40_22;
+           2*L5*m4*R50_22];
+    
+    D = L*Pi*L;
+    C = -L*Lambda*L*diag([omega1, omega2, omega3, omega4, omega5]);
 
-    D = [(5*m/4 + MH + MT)*r^2, -1/2*m*r^2*c12, MT*r*L*c13;
-                -1/2*m*r^2*c12,      1/4*m*r^2,          0;
-                    MT*r*L*c13,              0,     MT*L^2];
-
-    C = [                   0, -1/2*m*r^2*s12*omega2, MT*r*L*s13*omega3;
-         1/2*m*r^2*s12*omega1,                     0,                 0;
-           -MT*r*L*s13*omega1,                     0,                 0];
-
-    G = g*[-1/2*(2*MH + 3*m + 2*MT)*r*sin(theta1);
-                              1/2*m*r*sin(theta2);
-                                -MT*L*sin(theta3)];
 end
 
  function xdot = flow_map(x)

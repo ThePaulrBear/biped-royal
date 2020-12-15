@@ -16,12 +16,14 @@ torso_length = 0.6;
 theta_A_initial = 0.1; 
 theta_B_initial = -0.6;
 theta_Torso_initial = 0.5;
-theta3_ref = 0.0;
-x0 = [theta_A_initial, theta_B_initial, theta_Torso_initial, 0, 0, 0];
+theta3_ref = pi/4.0;
+x0 = [0, theta_A_initial, theta_B_initial, 0, theta_Torso_initial, 0, 0, 0, 0, 0];
 
-B = [-1,  0;
-      0, -1; 
-      1, 1];
+B = [-1,  0, 0, 0;
+      1, -1, 0, -1;
+      0, 1, -1, 0;
+      0, 0, 1, 0
+      0, 0, 0, 1];
 
 alpha = 0.9;
 z_start = leg_length*max(cos(theta_A_initial), cos(theta_B_initial))+leg_radius;
